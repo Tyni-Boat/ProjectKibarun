@@ -12,44 +12,19 @@ void UCharacterAnchor::OnOwnerDestroyed_internal(AActor* actor)
 		_linkedCharacter->OnCharacterDied.RemoveDynamic(this, &UCharacterAnchor::OnOwnerDestroyed_internal);
 	}
 	_linkedCharacter = nullptr;
-	UpdateAnchor();
-}
-
-void UCharacterAnchor::OnLinkedAnchorStateChanged_internal(UCharacterAnchor* Anchor, EAnchorState lastState, EAnchorState newState)
-{
-	if (newState == EAnchorState::Free)
-		return;
-	if (GetAnchorState() != EAnchorState::Free)
-		return;
-	if (_linkedAnchor.IsValid() && _linkedAnchor->_linkedCharacter.IsValid())
-	{
-		auto character = _linkedAnchor->_linkedCharacter.Get();
-		_linkedAnchor->SetNewOwner(nullptr);
-		SetNewOwner(character);
-	}
 }
 
 void UCharacterAnchor::OnBeginOverlap_internal(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep,
-											   const FHitResult& SweepResult)
+	const FHitResult& SweepResult)
 {
 	if (OtherActor != _linkedCharacter)
 		return;
-	if (UpdateAnchor() && GetAnchorState() == EAnchorState::Occupied)
-	{
-		if (_linkedCharacter.IsValid())
-			_linkedCharacter->OnAnchorReached();
-	}
 }
 
 void UCharacterAnchor::OnEndOverlap_internal(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
 {
 	if (OtherActor != _linkedCharacter)
 		return;
-	if (UpdateAnchor() && GetAnchorState() == EAnchorState::Reserved)
-	{
-		if (_linkedCharacter.IsValid())
-			_linkedCharacter->OnAnchorLeft();
-	}
 }
 
 UCharacterAnchor::UCharacterAnchor()
@@ -59,7 +34,7 @@ UCharacterAnchor::UCharacterAnchor()
 	BoxExtent = { 32, 32, 100 };
 }
 
-bool UCharacterAnchor::UpdateAnchor(bool silent)
+bool UCharacterAnchor::UpdateAnchor()
 {
 	bool response = false;
 	auto lastState = _state;
@@ -75,36 +50,26 @@ bool UCharacterAnchor::UpdateAnchor(bool silent)
 	if (lastState != _state)
 	{
 		response = true;
-		if (!silent)
+		OnAnchorStateChanged.Broadcast(this, lastState, _state);
+		if (_linkedCharacter.IsValid())
 		{
-			OnAnchorStateChanged.Broadcast(this, lastState, _state);
-			//if (auto world = GetWorld())
-			//	world->GetTimerManager().SetTimerForNextTick([this, lastState]()->void { OnAnchorStateChanged.Broadcast(this, lastState, _state); });
-		}
-	}
-	if (_state == EAnchorState::Free)
-	{
-		if (_linkedAnchor.IsValid())
-		{
-			if (_linkedAnchor->_linkedCharacter.IsValid())
+			if (lastState == EAnchorState::Occupied && _state == EAnchorState::Reserved)
 			{
-				auto character = _linkedAnchor->_linkedCharacter.Get();
-				_linkedAnchor->SetNewOwner(nullptr);
-				SetNewOwner(character);
+				// The owner just left
+				_linkedCharacter->OnAnchorLeft();
 			}
-		}
-		else if (!silent)
-		{
-			if (auto world = GetWorld())
+			else if (_state == EAnchorState::Occupied)
 			{
-				world->GetTimerManager().SetTimerForNextTick([this]()->void { OnAnchorRequestNewOwner.Broadcast(this); });
+				// The owner just reached
+				_linkedCharacter->OnAnchorReached();
 			}
 		}
 	}
+
 	return response;
 }
 
-void UCharacterAnchor::SetNewOwner(ABaseGasCharacter* NewOwner, bool silent)
+void UCharacterAnchor::SetNewOwner(ABaseGasCharacter* NewOwner)
 {
 	if (_linkedCharacter.IsValid())
 	{
@@ -117,16 +82,6 @@ void UCharacterAnchor::SetNewOwner(ABaseGasCharacter* NewOwner, bool silent)
 		_linkedCharacter->OnDestroyed.AddDynamic(this, &UCharacterAnchor::OnOwnerDestroyed_internal);
 		_linkedCharacter->OnCharacterDied.AddDynamic(this, &UCharacterAnchor::OnOwnerDestroyed_internal);
 	}
-	UpdateAnchor(silent);
 	if (_linkedCharacter.IsValid())
-		_linkedCharacter->SetNewAnchor(this, silent);
-}
-
-void UCharacterAnchor::LinkAnchor(UCharacterAnchor* NewLink)
-{
-	if (_linkedAnchor.IsValid())
-		_linkedAnchor->OnAnchorStateChanged.RemoveDynamic(this, &UCharacterAnchor::OnLinkedAnchorStateChanged_internal);
-	_linkedAnchor = NewLink;
-	if (_linkedAnchor.IsValid())
-		_linkedAnchor->OnAnchorStateChanged.AddDynamic(this, &UCharacterAnchor::OnLinkedAnchorStateChanged_internal);
+		_linkedCharacter->SetNewAnchor(this);
 }

@@ -54,7 +54,7 @@ private:
 	// Active when the character is moving to an anchor
 	EMoveToAnchorType _movingToAnchorType = EMoveToAnchorType::None;
 
-	UPROPERTY()
+	//UPROPERTY()
 	UFCTweenUObject* _dashTween;
 
 public:
@@ -130,7 +130,7 @@ public:
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
 	// Set a new anchor
-	void SetNewAnchor(UCharacterAnchor* newAnchor, bool silent = false);
+	void SetNewAnchor(UCharacterAnchor* newAnchor);
 
 	// Try Move to Anchor
 	UFUNCTION(BlueprintCallable, Category = "Character|Anchor")

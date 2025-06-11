@@ -7,8 +7,8 @@ public class CodeNameKibarun : ModuleRules
 	public CodeNameKibarun(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
-	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "GameplayAbilities", "TyniToolbox", "AIModule", "FCTween" });
+
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "GameplayAbilities", "AIModule", "FCTween" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
 

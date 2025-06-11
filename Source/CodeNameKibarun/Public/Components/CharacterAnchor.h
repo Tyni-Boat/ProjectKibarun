@@ -17,7 +17,6 @@ enum class EAnchorState : uint8
 };
 
 class UCharacterAnchor;
-DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_OneParam(FOnAnchorRequestNewOwnerSignature, UCharacterAnchor, OnAnchorRequestNewOwner, UCharacterAnchor*, Anchor);
 
 DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_ThreeParams(FOnAnchorStateChangedSignature, UCharacterAnchor, OnAnchorStateChanged, UCharacterAnchor*, Anchor, EAnchorState, LastState, EAnchorState, NewState);
 
@@ -35,17 +34,11 @@ protected:
 	UPROPERTY(VisibleInstanceOnly)
 	TWeakObjectPtr<ABaseGasCharacter> _linkedCharacter;
 
-	UPROPERTY(VisibleInstanceOnly)
-	TWeakObjectPtr<UCharacterAnchor> _linkedAnchor;
-
 	UPROPERTY()
 	EAnchorState _state;
 
 	UFUNCTION()
 	void OnOwnerDestroyed_internal(AActor* actor);
-
-	UFUNCTION()
-	void OnLinkedAnchorStateChanged_internal(UCharacterAnchor* Anchor, EAnchorState lastState, EAnchorState newState);
 
 	UFUNCTION()
 	void OnBeginOverlap_internal(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
@@ -57,24 +50,20 @@ public:
 
 	UCharacterAnchor();
 
-
-	UPROPERTY(BlueprintAssignable)
-	FOnAnchorRequestNewOwnerSignature OnAnchorRequestNewOwner;
-
 	UPROPERTY(BlueprintAssignable)
 	FOnAnchorStateChangedSignature OnAnchorStateChanged;
 
 	UFUNCTION(BlueprintPure, Category = "Character Anchor", meta = (CompactNodeTitle = "State"))
 	FORCEINLINE EAnchorState GetAnchorState() const { return _state; }
 
+	UFUNCTION(BlueprintPure, Category = "Character Anchor", meta = (CompactNodeTitle = "Owner"))
+	FORCEINLINE ABaseGasCharacter* GetBaseOwnwer() { return _linkedCharacter.IsValid()? _linkedCharacter.Get() : nullptr; }
+
 
 	// Return true if the state changed. Silent avoid broadcasting the state change event.
 	UFUNCTION(BlueprintCallable, Category = "Character Anchor")
-	bool UpdateAnchor(bool silent = false);
+	bool UpdateAnchor();
 
 	UFUNCTION(BlueprintCallable, Category = "Character Anchor")
-	void SetNewOwner(ABaseGasCharacter* NewOwner, bool silent = false);
-
-	UFUNCTION(BlueprintCallable, Category = "Character Anchor")
-	void LinkAnchor(UCharacterAnchor* NewLink);
+	void SetNewOwner(ABaseGasCharacter* NewOwner);
 };

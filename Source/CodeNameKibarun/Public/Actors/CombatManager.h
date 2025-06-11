@@ -94,7 +94,7 @@ protected:
 	FEnemyWave CurrentWave;
 	TQueue<FEnemyWave> WaveQueue;
 	TQueue<FPrimaryAssetId> SpawnQueue;
-	FTimerHandle SpawnTimer;
+	float SpawnTimer;
 	bool bIsSpawning = false;
 
 
@@ -121,12 +121,6 @@ protected:
 
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
-
-	UFUNCTION()
-	void OnAnchorRequestSpawn_Internal(UCharacterAnchor* anchor);
-
-	UFUNCTION()
-	void OnAnchorStateChanged_Internal(UCharacterAnchor* anchor, EAnchorState LastState, EAnchorState NewState);
 
 	UFUNCTION()
 	void OnHeroPlayerLoaded_Internal(FPrimaryAssetId heroID, FTransform Spawn, UCharacterAnchor* charAnchor = nullptr);
@@ -181,7 +175,7 @@ public:
 
 	// Try Spawn Enemy from the current wave
 	UFUNCTION(BlueprintCallable, Category = "Level")
-	bool TrySpawnEnemy();
+	bool TrySpawnEnemy(float DeltaTime);
 
 	// Spawn Enemy
 	UFUNCTION(BlueprintCallable, Category = "Level")

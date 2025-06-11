@@ -40,7 +40,7 @@ void ABaseGasCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 	if (Anchor)
-		Anchor->SetNewOwner(this, !CharacterData || !CharacterData->IsA<UEnemyData>());
+		Anchor->SetNewOwner(this);
 	if (AbilitySystemComponent)
 	{
 		AbilitySystemComponent->InitAbilityActorInfo(this, this);
@@ -57,59 +57,59 @@ bool ABaseGasCharacter::MoveToAnchor_Implementation(EMoveToAnchorType movementTy
 		return false;
 	switch (movementType)
 	{
-		case EMoveToAnchorType::None:
-			break;
-		case EMoveToAnchorType::Walk:
+	case EMoveToAnchorType::None:
+		break;
+	case EMoveToAnchorType::Walk:
+	{
+		float walkSpeed = GetCharacterMovement()->MaxWalkSpeed;
+		GetCharacterMovement()->MaxWalkSpeed = CharacterData ? CharacterData->Stats.OnGroundSpeeds.X : 250;
+		if (targetAnchor == Anchor)
+			movingToAnchorType = EMoveToAnchorType::Walk;
+		UAIBlueprintHelperLibrary::SimpleMoveToLocation(GetController(), targetAnchor->GetComponentLocation());
+	}
+	break;
+	case EMoveToAnchorType::Run:
+	{
+		float runSpeed = GetCharacterMovement()->MaxWalkSpeed;
+		GetCharacterMovement()->MaxWalkSpeed = CharacterData ? CharacterData->Stats.OnGroundSpeeds.Y : 450;
+		if (targetAnchor == Anchor)
+			movingToAnchorType = EMoveToAnchorType::Run;
+		UAIBlueprintHelperLibrary::SimpleMoveToLocation(GetController(), targetAnchor->GetComponentLocation());
+	}
+	break;
+	case EMoveToAnchorType::Dash:
+	{
+		if (_dashTween && _dashTween->Tween && _dashTween->Tween->bIsActive)
+		{
+			_dashTween->Tween->Destroy();
+			_dashTween->Tween = nullptr;
+			_dashTween->ConditionalBeginDestroy();
+		}
+		if (targetAnchor == Anchor)
+			movingToAnchorType = EMoveToAnchorType::Dash;
+		_dashTween = FCTween::Play(
+			GetActorLocation(),
+			targetAnchor->GetComponentLocation(),
+			[&](FVector t)
 			{
-				float walkSpeed = GetCharacterMovement()->MaxWalkSpeed;
-				GetCharacterMovement()->MaxWalkSpeed = CharacterData ? CharacterData->Stats.OnGroundSpeeds.X : 250;
-				if (targetAnchor == Anchor)
-					movingToAnchorType = EMoveToAnchorType::Walk;
-				UAIBlueprintHelperLibrary::SimpleMoveToLocation(GetController(), targetAnchor->GetComponentLocation());
-			}
-			break;
-		case EMoveToAnchorType::Run:
-			{
-				float runSpeed = GetCharacterMovement()->MaxWalkSpeed;
-				GetCharacterMovement()->MaxWalkSpeed = CharacterData ? CharacterData->Stats.OnGroundSpeeds.Y : 450;
-				if (targetAnchor == Anchor)
-					movingToAnchorType = EMoveToAnchorType::Run;
-				UAIBlueprintHelperLibrary::SimpleMoveToLocation(GetController(), targetAnchor->GetComponentLocation());
-			}
-			break;
-		case EMoveToAnchorType::Dash:
-			{
-				if (_dashTween && _dashTween->Tween && _dashTween->Tween->bIsActive)
-				{
-					_dashTween->Tween->Destroy();
-					_dashTween->Tween = nullptr;
-					_dashTween->ConditionalBeginDestroy();
-				}
-				if (targetAnchor == Anchor)
-					movingToAnchorType = EMoveToAnchorType::Dash;
-				_dashTween = FCTween::Play(
-					GetActorLocation(),
-					targetAnchor->GetComponentLocation(),
-					[&](FVector t)
-					{
-						SetActorLocation(t, true);
-					},
-					DashTime,
-					DashEasing)->CreateUObject(this);
-				_dashTween->Tween->SetOnComplete([&]() { OnAnchorReached(); });
-				_dashTween->Tween->SetUseGlobalTimeDilation(true);
-			}
-			break;
-		case EMoveToAnchorType::Teleport:
-			{
-				if (targetAnchor == Anchor)
-					movingToAnchorType = EMoveToAnchorType::Teleport;
-				SetActorLocation(targetAnchor->GetComponentLocation(), false, nullptr, ETeleportType::TeleportPhysics);
-				OnAnchorReached();
-			}
-			break;
-		default:
-			break;
+				SetActorLocation(t, false);
+			},
+			DashTime,
+			DashEasing)->CreateUObject(this);
+		_dashTween->Tween->SetOnComplete([&]() { OnAnchorReached(); });
+		_dashTween->Tween->SetUseGlobalTimeDilation(true);
+	}
+	break;
+	case EMoveToAnchorType::Teleport:
+	{
+		if (targetAnchor == Anchor)
+			movingToAnchorType = EMoveToAnchorType::Teleport;
+		SetActorLocation(targetAnchor->GetComponentLocation(), false, nullptr, ETeleportType::TeleportPhysics);
+		OnAnchorReached();
+	}
+	break;
+	default:
+		break;
 	}
 	return true;
 }
@@ -126,12 +126,11 @@ void ABaseGasCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 }
 
-void ABaseGasCharacter::SetNewAnchor(UCharacterAnchor* newAnchor, bool silent)
+void ABaseGasCharacter::SetNewAnchor(UCharacterAnchor* newAnchor)
 {
 	auto oldAnchor = Anchor;
 	Anchor = newAnchor;
-	if (!silent)
-		OnAnchorChanged.Broadcast(oldAnchor, Anchor);
+	OnAnchorChanged.Broadcast(oldAnchor, Anchor);
 }
 
 bool ABaseGasCharacter::TryMoveToAnchor(EMoveToAnchorType movementType)

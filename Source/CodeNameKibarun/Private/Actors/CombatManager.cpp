@@ -35,24 +35,6 @@ void ACombatManager::BeginPlay()
 			subSys->SetCombatManager(this);
 }
 
-void ACombatManager::OnAnchorRequestSpawn_Internal(UCharacterAnchor* anchor)
-{
-	UKismetSystemLibrary::PrintString(this, FString::Printf(TEXT("Anchor %s requested a Spawn"), *anchor->GetFName().ToString()));
-	TrySpawnEnemy();
-}
-
-void ACombatManager::OnAnchorStateChanged_Internal(UCharacterAnchor* anchor, EAnchorState LastState, EAnchorState NewState)
-{
-	if (HeroAnchors.IsValidIndex(0) && HeroAnchors[0] == anchor && NewState == EAnchorState::Occupied)
-	{
-		if (CurrentPhase == ECombatPhase::Opening)
-		{
-			SpawnAllies();
-			OnPhaseEnded.Broadcast(ECombatPhase::Opening);
-		}
-	}
-}
-
 void ACombatManager::OnHeroPlayerLoaded_Internal(FPrimaryAssetId heroID, FTransform Spawn, UCharacterAnchor* charAnchor)
 {
 	const auto mgr = UAssetManager::GetIfInitialized();
@@ -152,6 +134,48 @@ void ACombatManager::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	// Update Anchors
+	for (int i = 0; i < HeroAnchors.Num(); i++)
+	{
+		bool changed = HeroAnchors[i]->UpdateAnchor();
+		if (changed)
+		{
+			if (i == 0)
+			{
+				if (CurrentPhase == ECombatPhase::Opening && HeroAnchors[i]->GetAnchorState() == EAnchorState::Occupied)
+				{
+					SpawnAllies();
+					OnPhaseEnded.Broadcast(ECombatPhase::Opening);
+				}
+			}
+		}
+	}
+	for (int i = 0; i < EnemyAnchors.Num(); i++)
+	{
+		bool changed = EnemyAnchors[i]->UpdateAnchor();
+		if (EnemyAnchors[i]->GetAnchorState() == EAnchorState::Free)
+		{
+			bool isLast = i >= EnemyAnchors.Num() - 1;
+			if (isLast)
+			{
+				// Update the enemy spawning
+				//if (CurrentPhase == ECombatPhase::Begining || CurrentPhase == ECombatPhase::Active)
+				{
+					//if (changed)
+						TrySpawnEnemy(DeltaTime);
+				}
+			}
+			else
+			{
+				if (auto owner = EnemyAnchors[i + 1]->GetBaseOwnwer())
+				{
+					EnemyAnchors[i + 1]->SetNewOwner(nullptr);
+					EnemyAnchors[i]->SetNewOwner(owner);
+				}
+			}
+		}
+	}
+
 	for (auto anchor : HeroAnchors)
 	{
 		FLinearColor color = anchor->GetAnchorState() == EAnchorState::Free ? FLinearColor::Green : (anchor->GetAnchorState() == EAnchorState::Occupied ? FLinearColor::Red : FLinearColor::Blue);
@@ -193,7 +217,6 @@ void ACombatManager::PlaceAnchors()
 		anchor->SetupAttachment(RootComponent);
 		anchor->RegisterComponent();
 		anchor->SetRelativeLocation(GetActorTransform().InverseTransformPosition(location));
-		anchor->OnAnchorStateChanged.AddDynamic(this, &ACombatManager::OnAnchorStateChanged_Internal);
 		HeroAnchors.Add(anchor);
 	}
 
@@ -221,13 +244,6 @@ void ACombatManager::PlaceAnchors()
 		anchor->SetupAttachment(RootComponent);
 		anchor->RegisterComponent();
 		anchor->SetRelativeLocation(GetActorTransform().InverseTransformPosition(location));
-		anchor->OnAnchorStateChanged.AddDynamic(this, &ACombatManager::OnAnchorStateChanged_Internal);
-		if (EnemyAnchors.IsEmpty())
-			//Link the Anchor request
-			anchor->OnAnchorRequestNewOwner.AddDynamic(this, &ACombatManager::OnAnchorRequestSpawn_Internal);
-		else
-			//Link the Previous anchor
-			anchor->LinkAnchor(EnemyAnchors[0]);
 		EnemyAnchors.Insert(anchor, 0);
 	}
 }
@@ -309,25 +325,11 @@ void ACombatManager::CreateNextWave()
 			return;
 		}
 
-		//Cancel the spawn delay
-		if (GetWorld())
-			GetWorld()->GetTimerManager().ClearTimer(SpawnTimer);
-
 		//Start the spawn timer
 		if (CurrentWave.SpawnDelay > 0.f)
-		{
-			GetWorld()->GetTimerManager().SetTimer(SpawnTimer, [this]()->void {
-				if (GetWorld())
-					GetWorld()->GetTimerManager().ClearTimer(SpawnTimer);
-				TrySpawnEnemy();
-												   }, CurrentWave.SpawnDelay, false);
-			return;
-		}
-
-		//Spawn the first enemy immediately if no timer is set
-		TrySpawnEnemy();
+			SpawnTimer = CurrentWave.SpawnDelay;
 	}
-	else
+	else if(CurrentPhase == ECombatPhase::Active)
 	{
 		int aliveCount = 0;
 		for (auto enemy : EnemiesInScene)
@@ -382,12 +384,18 @@ void ACombatManager::CreateNextWave()
 	}
 }
 
-bool ACombatManager::TrySpawnEnemy()
+bool ACombatManager::TrySpawnEnemy(float DeltaTime)
 {
-	if (CurrentWave.SpawnMode == EWaveSpawnMode::None)
+	if (CurrentWave.SpawnMode == EWaveSpawnMode::None || bIsSpawning)
 		return false;
-	if (SpawnTimer.IsValid())
-		return false; //Cannot spawn if a timer is already running
+	if (SpawnTimer > 0)
+	{
+		SpawnTimer -= DeltaTime;
+		if (SpawnTimer <= 0 && CurrentWave.SpawnDelay > 0)
+			SpawnTimer = CurrentWave.SpawnDelay;
+		else
+			return false; //Cannot spawn if a timer is active
+	}
 	int existingEnemies = EnemiesInScene.Num();
 	int aliveCount = 0;
 	for (auto enemy : EnemiesInScene)
@@ -404,18 +412,18 @@ bool ACombatManager::TrySpawnEnemy()
 	UKismetSystemLibrary::PrintString(this, FString::Printf(TEXT("Try to Spwn Enemy -> in scene: %d. Alives: %d. Free Anchors: %d"), existingEnemies, aliveCount, freeAnchorCount));
 	switch (CurrentWave.SpawnMode)
 	{
-		case EWaveSpawnMode::OnAllAnchorsFree:
-			if (freeAnchorCount < 3)
-				return false; //Cannot spawn if there are anchors are not free
-			break;
-		case EWaveSpawnMode::OnTwoAnchorsFree:
-			if (freeAnchorCount < 2)
-				return false; //Cannot spawn if there are not enough anchors are free
-			break;
-		case EWaveSpawnMode::OnOneAnchorsFree:
-			if (freeAnchorCount < 1)
-				return false; //Cannot spawn if there are not enough anchors are free
-			break;
+	case EWaveSpawnMode::OnAllAnchorsFree:
+		if (freeAnchorCount < 3)
+			return false; //Cannot spawn if there are no free anchors
+		break;
+	case EWaveSpawnMode::OnTwoAnchorsFree:
+		if (freeAnchorCount < 2)
+			return false; //Cannot spawn if there are not enough anchors are free
+		break;
+	case EWaveSpawnMode::OnOneAnchorsFree:
+		if (freeAnchorCount < 1)
+			return false; //Cannot spawn if there are not enough anchors are free
+		break;
 	}
 
 	// Get the next enemy to spawn
@@ -429,7 +437,7 @@ bool ACombatManager::TrySpawnEnemy()
 	// Check if the enemy ID is valid
 	if (!enemyID.IsValid())
 	{
-		TrySpawnEnemy(); //Invalid enemy ID, try next enemy
+		//Invalid enemy ID, try next enemy
 		return false;
 	}
 
