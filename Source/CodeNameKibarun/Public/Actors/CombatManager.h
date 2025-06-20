@@ -88,14 +88,30 @@ protected:
 	ECombatPhase CurrentPhase = ECombatPhase::Opening;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Level")
+	FPrimaryAssetId CombatDataID;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Level")
 	TObjectPtr<UCombatData> CombatData;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Level")
+	float CameraBlendTime = 0.5f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Level")
+	float CameraFadeTime = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Level")
+	bool AutoInitCombat = true;
+
+	
+
+	TFunction<void(bool)> OnCameraMoveEnded;
+	TFunction<void(bool)> OnCameraFadeEnded;
 	FEnemyWave CurrentWave;
 	TQueue<FEnemyWave> WaveQueue;
 	TQueue<FPrimaryAssetId> SpawnQueue;
 	float SpawnTimer;
 	bool bIsSpawning = false;
+	bool _wasLastStage = false;
 
 
 
@@ -119,8 +135,17 @@ protected:
 
 
 
+	
+	UFUNCTION(BlueprintPure, Category = "Level", meta = (CompactNodeTitle = "IsLastCombat"))
+	FORCEINLINE bool IsTheLastCombat() const { return _wasLastStage; }
+
+
+
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
+
+	UFUNCTION()
+	void OnStageLoaded_Internal(FPrimaryAssetId stageID);
 
 	UFUNCTION()
 	void OnHeroPlayerLoaded_Internal(FPrimaryAssetId heroID, FTransform Spawn, UCharacterAnchor* charAnchor = nullptr);
@@ -133,6 +158,12 @@ protected:
 
 	UFUNCTION()
 	void OnEnemyDestroyed_Internal(AActor* actor);
+
+	UFUNCTION()
+	void OnCameraMoveCommand_Internal();
+
+	UFUNCTION()
+	void OnCameraFadeCommand_Internal();
 
 	void SetCombatPhase(ECombatPhase phase);
 
@@ -153,6 +184,15 @@ public:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
 
+	// Update the anchors
+	void UpdateAnchors(float DeltaTime);
+
+	// Move the camera to the target actor
+	void MoveCameraCommand(AActor* target, const float blendTime, TFunction<void(bool)> onCameraMoveEnded);
+
+	// Fade the camera to the target alpha, with the atrget color
+	void FadeCameraCommand(const float fromAlpha, const float toAlpha, const float fadeTime, FLinearColor color, TFunction<void(bool)> onCameraFadeEnded);
+
 	// Place anchors on the ground
 	UFUNCTION(BlueprintCallable, Category = "Anchors")
 	void PlaceAnchors();
@@ -164,6 +204,14 @@ public:
 	// Spawn Allies
 	UFUNCTION(BlueprintCallable, Category = "Level")
 	void SpawnAllies();
+	
+	// Begin an initialized combat
+	UFUNCTION(BlueprintCallable, Category = "Level")
+	void BeginCombat();
+	
+	// End an initialized combat
+	UFUNCTION(BlueprintCallable, Category = "Level")
+	void EndCombat();
 
 	// Spawn a Character
 	UFUNCTION(BlueprintImplementableEvent, Category = "Level")

@@ -7,6 +7,8 @@
 #include "GameDataTypes/HeroData.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include <SubSystems/CombatSubSystem.h>
+#include <SubSystems/LevelSubsystem.h>
+#include <Kismet/GameplayStatics.h>
 
 
 // Sets default values
@@ -19,11 +21,11 @@ ACombatManager::ACombatManager()
 	SetRootComponent(Icon);
 #endif
 	LevelCameraArm = CreateDefaultSubobject<USpringArmComponent>("Camera Arm");
-	LevelCamera = CreateDefaultSubobject<UCameraComponent>("Level Camera");
-	LevelCamera->SetupAttachment(LevelCameraArm);
 	LevelCameraArm->SetRelativeRotation({ -45, -90, 0 });
 	LevelCameraArm->bDoCollisionTest = false;
 	LevelCameraArm->TargetArmLength = 800;
+	LevelCamera = CreateDefaultSubobject<UCameraComponent>("Level Camera");
+	LevelCamera->SetupAttachment(LevelCameraArm);
 }
 
 // Called when the game starts or when spawned
@@ -33,6 +35,35 @@ void ACombatManager::BeginPlay()
 	if (auto world = GetWorld())
 		if (auto subSys = world->GetSubsystem<UCombatSubSystem>())
 			subSys->SetCombatManager(this);
+
+	// Fade in the black screen
+	FadeCameraCommand(0.f, 1.f, 0, FLinearColor::Black, [&](bool success) {});
+
+	//Load Stage from level Subsystem
+	auto mgr = UAssetManager::GetIfInitialized();
+	if (mgr && AutoInitCombat)
+	{
+		if (auto gameInstance = UGameplayStatics::GetGameInstance(GetWorld()))
+		{
+			if (auto levelSub = gameInstance->GetSubsystem<ULevelSubsystem>())
+			{
+				FPrimaryAssetId stageID = levelSub->GetCurrentStage();
+				if (stageID.IsValid())
+				{
+					mgr->LoadPrimaryAsset(stageID, { BUNDLE_SPAWN }, FStreamableDelegate::CreateUObject(this, &ACombatManager::OnStageLoaded_Internal, stageID));
+				}
+			}
+		}
+	}
+}
+
+void ACombatManager::OnStageLoaded_Internal(FPrimaryAssetId stageID)
+{
+	const auto mgr = UAssetManager::GetIfInitialized();
+	if (!mgr)
+		return;
+	const auto stageData = mgr->GetPrimaryAssetObject<UCombatData>(stageID);
+	InitCombat(stageData);
 }
 
 void ACombatManager::OnHeroPlayerLoaded_Internal(FPrimaryAssetId heroID, FTransform Spawn, UCharacterAnchor* charAnchor)
@@ -76,6 +107,9 @@ void ACombatManager::OnHeroPlayerLoaded_Internal(FPrimaryAssetId heroID, FTransf
 		if (!madeTraversalIntro)
 			heroActor->TryMoveToAnchor(EMoveToAnchorType::Run);
 	}
+
+	// Fade in the black screen
+	FadeCameraCommand(1.f, 0.f, CameraFadeTime, FLinearColor::Black, [&](bool success) {});
 
 	OnPlayerSpawn.Broadcast(heroActor);
 }
@@ -121,6 +155,24 @@ void ACombatManager::OnEnemyDestroyed_Internal(AActor* actor)
 	}
 }
 
+void ACombatManager::OnCameraMoveCommand_Internal()
+{
+	if (OnCameraMoveEnded)
+	{
+		OnCameraMoveEnded(true);
+		OnCameraMoveEnded.Reset();
+	}
+}
+
+void ACombatManager::OnCameraFadeCommand_Internal()
+{
+	if (OnCameraFadeEnded)
+	{
+		OnCameraFadeEnded(true);
+		OnCameraFadeEnded.Reset();
+	}
+}
+
 void ACombatManager::SetCombatPhase(ECombatPhase phase)
 {
 	const auto lastPhase = CurrentPhase;
@@ -134,47 +186,7 @@ void ACombatManager::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	// Update Anchors
-	for (int i = 0; i < HeroAnchors.Num(); i++)
-	{
-		bool changed = HeroAnchors[i]->UpdateAnchor();
-		if (changed)
-		{
-			if (i == 0)
-			{
-				if (CurrentPhase == ECombatPhase::Opening && HeroAnchors[i]->GetAnchorState() == EAnchorState::Occupied)
-				{
-					SpawnAllies();
-					OnPhaseEnded.Broadcast(ECombatPhase::Opening);
-				}
-			}
-		}
-	}
-	for (int i = 0; i < EnemyAnchors.Num(); i++)
-	{
-		bool changed = EnemyAnchors[i]->UpdateAnchor();
-		if (EnemyAnchors[i]->GetAnchorState() == EAnchorState::Free)
-		{
-			bool isLast = i >= EnemyAnchors.Num() - 1;
-			if (isLast)
-			{
-				// Update the enemy spawning
-				//if (CurrentPhase == ECombatPhase::Begining || CurrentPhase == ECombatPhase::Active)
-				{
-					//if (changed)
-						TrySpawnEnemy(DeltaTime);
-				}
-			}
-			else
-			{
-				if (auto owner = EnemyAnchors[i + 1]->GetBaseOwnwer())
-				{
-					EnemyAnchors[i + 1]->SetNewOwner(nullptr);
-					EnemyAnchors[i]->SetNewOwner(owner);
-				}
-			}
-		}
-	}
+	UpdateAnchors(DeltaTime);
 
 	for (auto anchor : HeroAnchors)
 	{
@@ -186,6 +198,102 @@ void ACombatManager::Tick(float DeltaTime)
 	{
 		FLinearColor color = anchor->GetAnchorState() == EAnchorState::Free ? FLinearColor::Green : (anchor->GetAnchorState() == EAnchorState::Occupied ? FLinearColor::Red : FLinearColor::Blue);
 		UKismetSystemLibrary::DrawDebugSphere(this, GetActorTransform().TransformPosition(anchor->GetRelativeLocation()), 100.f, 12, color, 0, 1.f);
+	}
+}
+
+void ACombatManager::UpdateAnchors(float DeltaTime)
+{
+	// Update Anchors
+	for (int i = 0; i < HeroAnchors.Num(); i++)
+	{
+		bool changed = HeroAnchors[i]->UpdateAnchor();
+		if (changed)
+		{
+			if (i == 0)
+			{
+				if (CurrentPhase == ECombatPhase::Opening && HeroAnchors[i]->GetAnchorState() == EAnchorState::Occupied)
+				{
+					SpawnAllies();
+					CreateNextWave();
+				}
+			}
+		}
+	}
+
+	for (int i = 0; i < EnemyAnchors.Num(); i++)
+	{
+		bool changed = EnemyAnchors[i]->UpdateAnchor();
+		bool isLast = i >= EnemyAnchors.Num() - 1;
+		switch (EnemyAnchors[i]->GetAnchorState())
+		{
+			case EAnchorState::Free:
+				{
+					if (isLast)
+					{
+						if (CurrentPhase == ECombatPhase::Active || CurrentPhase == ECombatPhase::Opening)
+						{
+							TrySpawnEnemy(DeltaTime);
+						}
+					}
+					else
+					{
+						if (auto owner = EnemyAnchors[i + 1]->GetBaseOwnwer())
+						{
+							EnemyAnchors[i + 1]->SetNewOwner(nullptr);
+							EnemyAnchors[i]->SetNewOwner(owner);
+						}
+					}
+				}
+				break;
+			case EAnchorState::Occupied: {
+					if (isLast && changed)
+					{
+						if (CurrentPhase == ECombatPhase::Opening)
+						{
+							OnPhaseEnded.Broadcast(ECombatPhase::Opening);
+						}
+					}
+				}break;
+		}
+	}
+}
+
+void ACombatManager::MoveCameraCommand(AActor* target, const float blendTime, TFunction<void(bool)> onCameraMoveEnded)
+{
+	if (OnCameraMoveEnded)
+	{
+		OnCameraMoveEnded(false);
+		OnCameraMoveEnded.Reset();
+	}
+	if (!target || !GetWorld() || !GetWorld()->GetFirstPlayerController())
+		return;
+	if (auto plController = GetWorld()->GetFirstPlayerController())
+	{
+		plController->SetViewTargetWithBlend(target, blendTime, VTBlend_Cubic);
+		OnCameraMoveEnded = onCameraMoveEnded;
+		FTimerHandle hdl;
+		GetWorld()->GetTimerManager().SetTimer(hdl, [&]()->void {OnCameraMoveCommand_Internal(); }, blendTime, false);
+	}
+}
+
+void ACombatManager::FadeCameraCommand(const float fromAlpha, const float toAlpha, const float fadeTime, FLinearColor color, TFunction<void(bool)> onCameraFadeEnded)
+{
+	if (OnCameraFadeEnded)
+	{
+		OnCameraFadeEnded(false);
+		OnCameraFadeEnded.Reset();
+	}
+	if (!GetWorld() || !GetWorld()->GetFirstPlayerController())
+		return;
+	if (auto plController = GetWorld()->GetFirstPlayerController())
+	{
+		if (auto camMgr = plController->PlayerCameraManager)
+		{
+			camMgr->StartCameraFade(fromAlpha, toAlpha, fadeTime, color, true, true);
+			OnCameraFadeEnded = onCameraFadeEnded;
+			FTimerHandle hdl;
+			GetWorld()->GetTimerManager().SetTimer(hdl, [&]()->void {OnCameraFadeCommand_Internal(); }, fadeTime, false);
+		}
 	}
 }
 
@@ -259,6 +367,17 @@ void ACombatManager::InitCombat(UCombatData* data)
 	auto mgr = UAssetManager::GetIfInitialized();
 	if (!mgr)
 		return;
+	auto combatId = data->GetPrimaryAssetId();
+	if (!combatId.IsValid())
+		return;
+	if (auto gameInstance = UGameplayStatics::GetGameInstance(GetWorld()))
+	{
+		if (auto levelSub = gameInstance->GetSubsystem<ULevelSubsystem>())
+		{
+			_wasLastStage = levelSub->IsLastStage();
+		}
+	}
+	CombatDataID = combatId;
 	CombatData = data;
 
 	// Place anchors on the ground
@@ -297,6 +416,34 @@ void ACombatManager::SpawnAllies()
 	}
 }
 
+void ACombatManager::BeginCombat()
+{
+	// Pan the camera to the combat area
+	SetCombatPhase(ECombatPhase::Begining);
+	MoveCameraCommand(this, CameraBlendTime, [&](bool success)
+					  {
+						  if (success)
+						  {
+							  if (CurrentPhase == ECombatPhase::Begining)
+							  {
+								  OnPhaseEnded.Broadcast(ECombatPhase::Begining);
+							  }
+							  SetCombatPhase(ECombatPhase::Active);
+						  }
+					  });
+
+	// Wait for the camera to be ready
+	// Set the combat phase to Active
+}
+
+void ACombatManager::EndCombat()
+{
+	UKismetSystemLibrary::PrintString(this, FString::Printf(TEXT("Combat Ended")));
+	SetCombatPhase(ECombatPhase::Ended);
+	// Fade in the black screen
+	FadeCameraCommand(0.f, 1.f, CameraFadeTime, FLinearColor::Black, [&](bool success) { OnPhaseEnded.Broadcast(ECombatPhase::Ended); });
+}
+
 void ACombatManager::CreateNextWave()
 {
 	// Set the current wave
@@ -329,7 +476,7 @@ void ACombatManager::CreateNextWave()
 		if (CurrentWave.SpawnDelay > 0.f)
 			SpawnTimer = CurrentWave.SpawnDelay;
 	}
-	else if(CurrentPhase == ECombatPhase::Active)
+	else if (CurrentPhase == ECombatPhase::Active)
 	{
 		int aliveCount = 0;
 		for (auto enemy : EnemiesInScene)
@@ -348,9 +495,18 @@ void ACombatManager::CreateNextWave()
 		{
 			if (auto heroActor = HeroesInScene[0])
 			{
+				if (auto gameInstance = UGameplayStatics::GetGameInstance(GetWorld()))
+				{
+					if (auto levelSub = gameInstance->GetSubsystem<ULevelSubsystem>())
+					{
+						if (!_wasLastStage)
+							levelSub->MoveToStage(1);
+					}
+				}
+
 				//Make the player do the outro traversal
 				bool madeTraversalOutro = false;
-				if (CombatData)
+				if (CombatData && !_wasLastStage)
 				{
 					auto traversal = CombatData->PlayerOutroTraversal.Get();
 					//Load the traversal if not already loaded
@@ -370,15 +526,16 @@ void ACombatManager::CreateNextWave()
 				}
 
 				//Snap to the Player's Camera
-				if (auto plController = GetWorld()->GetFirstPlayerController())
-				{
-					plController->SetViewTargetWithBlend(heroActor, 0.5f, VTBlend_Cubic);
-				}
+				MoveCameraCommand(heroActor, CameraBlendTime, [&, madeTraversalOutro](bool success)
+								  {
+									  OnPhaseEnded.Broadcast(ECombatPhase::Ending);
+									  if (!madeTraversalOutro)
+									  {
+										  //If the outro traversal is not set, just execute end combat
+										  EndCombat();
+									  }
+								  });
 
-				if (!madeTraversalOutro)
-				{
-					//If the outro traversal is not set, just execute end combat
-				}
 			}
 		}
 	}
@@ -391,10 +548,13 @@ bool ACombatManager::TrySpawnEnemy(float DeltaTime)
 	if (SpawnTimer > 0)
 	{
 		SpawnTimer -= DeltaTime;
-		if (SpawnTimer <= 0 && CurrentWave.SpawnDelay > 0)
-			SpawnTimer = CurrentWave.SpawnDelay;
-		else
+		if (SpawnTimer > 0)
 			return false; //Cannot spawn if a timer is active
+		else
+		{
+			//if (CurrentWave.SpawnDelay > 0)
+			//	SpawnTimer = CurrentWave.SpawnDelay;
+		}
 	}
 	int existingEnemies = EnemiesInScene.Num();
 	int aliveCount = 0;
@@ -412,18 +572,18 @@ bool ACombatManager::TrySpawnEnemy(float DeltaTime)
 	UKismetSystemLibrary::PrintString(this, FString::Printf(TEXT("Try to Spwn Enemy -> in scene: %d. Alives: %d. Free Anchors: %d"), existingEnemies, aliveCount, freeAnchorCount));
 	switch (CurrentWave.SpawnMode)
 	{
-	case EWaveSpawnMode::OnAllAnchorsFree:
-		if (freeAnchorCount < 3)
-			return false; //Cannot spawn if there are no free anchors
-		break;
-	case EWaveSpawnMode::OnTwoAnchorsFree:
-		if (freeAnchorCount < 2)
-			return false; //Cannot spawn if there are not enough anchors are free
-		break;
-	case EWaveSpawnMode::OnOneAnchorsFree:
-		if (freeAnchorCount < 1)
-			return false; //Cannot spawn if there are not enough anchors are free
-		break;
+		case EWaveSpawnMode::OnAllAnchorsFree:
+			if (freeAnchorCount < 3 && !CurrentWave.HasBeganSpawn)
+				return false; //Cannot spawn if there are no free anchors
+			break;
+		case EWaveSpawnMode::OnTwoAnchorsFree:
+			if (freeAnchorCount < 2 && !CurrentWave.HasBeganSpawn)
+				return false; //Cannot spawn if there are not enough anchors are free
+			break;
+		case EWaveSpawnMode::OnOneAnchorsFree:
+			if (freeAnchorCount < 1)
+				return false; //Cannot spawn if there are not enough anchors are free
+			break;
 	}
 
 	// Get the next enemy to spawn
@@ -442,6 +602,7 @@ bool ACombatManager::TrySpawnEnemy(float DeltaTime)
 	}
 
 	// Spawn the enemy
+	CurrentWave.HasBeganSpawn = true;
 	SpawnEnemy(enemyID);
 	return true;
 }

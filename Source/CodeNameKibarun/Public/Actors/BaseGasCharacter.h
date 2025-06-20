@@ -56,6 +56,7 @@ private:
 
 	//UPROPERTY()
 	UFCTweenUObject* _dashTween;
+	FCTweenInstanceVector* _dashTweenVector;
 
 public:
 	// Sets default values for this character's properties
@@ -83,6 +84,9 @@ public:
 
 	UPROPERTY(EditAnywhere, Category="Ability System|Attributes")
 	float DashTime = 1.35f;
+
+	UPROPERTY(EditAnywhere, Category="Ability System|Attributes")
+	float DashDelay = 0.08f;
 
 	UPROPERTY(EditAnywhere, Category="Ability System|Attributes")
 	EFCEase DashEasing = EFCEase::InOutExpo;

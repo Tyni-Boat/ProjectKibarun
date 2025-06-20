@@ -34,6 +34,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Wave", meta=(AllowedTypes = "EnemyData"))
 	TArray<FPrimaryAssetId> WaveEnemies;
 	
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category="Wave")
+	bool HasBeganSpawn = false;
+	
 };
 
 

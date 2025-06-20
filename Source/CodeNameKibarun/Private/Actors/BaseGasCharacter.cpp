@@ -8,6 +8,7 @@
 #include "Components/CharacterAnchor.h"
 #include "Blueprint/AIBlueprintHelperLibrary.h"
 #include <GameDataTypes/EnemyData.h>
+#include "FCTweenInstanceVector.h"
 
 
 // Sets default values
@@ -57,59 +58,66 @@ bool ABaseGasCharacter::MoveToAnchor_Implementation(EMoveToAnchorType movementTy
 		return false;
 	switch (movementType)
 	{
-	case EMoveToAnchorType::None:
-		break;
-	case EMoveToAnchorType::Walk:
-	{
-		float walkSpeed = GetCharacterMovement()->MaxWalkSpeed;
-		GetCharacterMovement()->MaxWalkSpeed = CharacterData ? CharacterData->Stats.OnGroundSpeeds.X : 250;
-		if (targetAnchor == Anchor)
-			movingToAnchorType = EMoveToAnchorType::Walk;
-		UAIBlueprintHelperLibrary::SimpleMoveToLocation(GetController(), targetAnchor->GetComponentLocation());
-	}
-	break;
-	case EMoveToAnchorType::Run:
-	{
-		float runSpeed = GetCharacterMovement()->MaxWalkSpeed;
-		GetCharacterMovement()->MaxWalkSpeed = CharacterData ? CharacterData->Stats.OnGroundSpeeds.Y : 450;
-		if (targetAnchor == Anchor)
-			movingToAnchorType = EMoveToAnchorType::Run;
-		UAIBlueprintHelperLibrary::SimpleMoveToLocation(GetController(), targetAnchor->GetComponentLocation());
-	}
-	break;
-	case EMoveToAnchorType::Dash:
-	{
-		if (_dashTween && _dashTween->Tween && _dashTween->Tween->bIsActive)
-		{
-			_dashTween->Tween->Destroy();
-			_dashTween->Tween = nullptr;
-			_dashTween->ConditionalBeginDestroy();
-		}
-		if (targetAnchor == Anchor)
-			movingToAnchorType = EMoveToAnchorType::Dash;
-		_dashTween = FCTween::Play(
-			GetActorLocation(),
-			targetAnchor->GetComponentLocation(),
-			[&](FVector t)
+		case EMoveToAnchorType::None:
+			break;
+		case EMoveToAnchorType::Walk:
 			{
-				SetActorLocation(t, false);
-			},
-			DashTime,
-			DashEasing)->CreateUObject(this);
-		_dashTween->Tween->SetOnComplete([&]() { OnAnchorReached(); });
-		_dashTween->Tween->SetUseGlobalTimeDilation(true);
-	}
-	break;
-	case EMoveToAnchorType::Teleport:
-	{
-		if (targetAnchor == Anchor)
-			movingToAnchorType = EMoveToAnchorType::Teleport;
-		SetActorLocation(targetAnchor->GetComponentLocation(), false, nullptr, ETeleportType::TeleportPhysics);
-		OnAnchorReached();
-	}
-	break;
-	default:
-		break;
+				float walkSpeed = GetCharacterMovement()->MaxWalkSpeed;
+				GetCharacterMovement()->MaxWalkSpeed = CharacterData ? CharacterData->Stats.OnGroundSpeeds.X : 250;
+				if (targetAnchor == Anchor)
+					movingToAnchorType = EMoveToAnchorType::Walk;
+				UAIBlueprintHelperLibrary::SimpleMoveToLocation(GetController(), targetAnchor->GetComponentLocation());
+			}
+			break;
+		case EMoveToAnchorType::Run:
+			{
+				float runSpeed = GetCharacterMovement()->MaxWalkSpeed;
+				GetCharacterMovement()->MaxWalkSpeed = CharacterData ? CharacterData->Stats.OnGroundSpeeds.Y : 450;
+				if (targetAnchor == Anchor)
+					movingToAnchorType = EMoveToAnchorType::Run;
+				UAIBlueprintHelperLibrary::SimpleMoveToLocation(GetController(), targetAnchor->GetComponentLocation());
+			}
+			break;
+		case EMoveToAnchorType::Dash:
+			{
+				if (_dashTween != nullptr)
+				{
+					if (_dashTweenVector && _dashTweenVector->bIsActive)
+					{
+						_dashTweenVector->Destroy();
+						_dashTweenVector = nullptr;
+					}
+				}
+				if (targetAnchor == Anchor)
+					movingToAnchorType = EMoveToAnchorType::Dash;
+				GetCharacterMovement()->MaxWalkSpeed = 1;
+				_dashTweenVector = FCTween::Play(
+					GetActorLocation(), targetAnchor->GetComponentLocation(), [&](FVector t)
+					{
+						if (auto movement = GetCharacterMovement())
+						{
+							movement->AddInputVector(_dashTweenVector->EndValue - t, false);
+							movement->Velocity = (t - GetActorLocation()) / GetWorld()->DeltaTimeSeconds;
+						}
+					},
+					DashTime,
+					DashEasing);
+				_dashTweenVector->SetDelay(DashDelay);
+				_dashTweenVector->SetOnComplete([&]() { OnAnchorReached(); });
+				_dashTweenVector->SetUseGlobalTimeDilation(true);
+				_dashTween = _dashTweenVector->CreateUObject(this);
+			}
+			break;
+		case EMoveToAnchorType::Teleport:
+			{
+				if (targetAnchor == Anchor)
+					movingToAnchorType = EMoveToAnchorType::Teleport;
+				SetActorLocation(targetAnchor->GetComponentLocation(), false, nullptr, ETeleportType::TeleportPhysics);
+				OnAnchorReached();
+			}
+			break;
+		default:
+			break;
 	}
 	return true;
 }
